@@ -1286,7 +1286,10 @@
 
       useEffect(() => {
         const unsub = db.collection('notifications').orderBy('createdAt','desc').limit(60).onSnapshot(snap => {
-          const all = snap.docs.map(d=>({id:d.id,...d.data()})).filter(canReadNotification);
+          const all = snap.docs
+            .map(d=>({id:d.id,...d.data()}))
+            .filter(canReadNotification)
+            .sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
           setNotifications(all);
           const seenKey = `seenNotifAt_${user.id}`;
           const seenAt = localStorage.getItem(seenKey);
@@ -1302,8 +1305,17 @@
       };
 
       const activateNotifications = async () => {
+        if (typeof Notification === 'undefined') {
+          showToast('Desteklenmiyor', 'Bu tarayıcı bildirim API desteklemiyor.', 'warning');
+          setNotifPermission('unsupported');
+          return;
+        }
         await requestNotifPermission();
-        setNotifPermission(typeof Notification!=='undefined' ? Notification.permission : 'unsupported');
+        const current = Notification.permission;
+        setNotifPermission(current);
+        if (current === 'denied') {
+          showToast('Bildirim Engellendi', 'Tarayıcı ayarlarından bildirim iznini açabilirsiniz.', 'warning');
+        }
       };
 
       const sendSelfTestNotification = async () => {
