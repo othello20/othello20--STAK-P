@@ -283,6 +283,11 @@
     .section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;gap:12px;flex-wrap:wrap}
     .section-title{font-size:20px;font-weight:700;display:flex;align-items:center;gap:10px}
     .count-badge{background:var(--light-gray);color:var(--text-muted);padding:3px 9px;border-radius:8px;font-size:13px;font-weight:700}
+    .notice-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:16px}
+    .notice-title{font-size:14px;font-weight:700;margin-bottom:6px}
+    .notice-sub{font-size:12px;color:var(--text-muted);margin-bottom:10px}
+    .notice-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .status-chip{padding:5px 10px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--border);background:var(--light-gray)}
 
     /* ── Divider ── */
     .divider{height:1px;background:var(--border);margin:20px 0}
@@ -377,6 +382,12 @@
       return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
     };
     const randomId = () => Math.random().toString(36).substr(2,8).toUpperCase();
+    const getDeviceLabel = () => {
+      const ua = navigator.userAgent || '';
+      if (/android/i.test(ua)) return 'Android';
+      if (/iPhone|iPad|iPod/i.test(ua)) return 'iOS';
+      return 'Web';
+    };
 
     // ─── Toast ─────────────────────────────────────────
     const showToast = (title, message, type='info') => {
@@ -1244,6 +1255,7 @@
       const [showNotifications, setShowNotifications] = useState(false);
       const [notifications, setNotifications] = useState([]);
       const [unreadCount, setUnreadCount] = useState(0);
+      const [notifPermission, setNotifPermission] = useState(typeof Notification!=='undefined' ? Notification.permission : 'unsupported');
 
       const canReadNotification = useCallback((n) => {
         if (!n) return false;
@@ -1287,6 +1299,22 @@
       const markNotificationsSeen = () => {
         localStorage.setItem(`seenNotifAt_${user.id}`, nowIso());
         setUnreadCount(0);
+      };
+
+      const activateNotifications = async () => {
+        await requestNotifPermission();
+        setNotifPermission(typeof Notification!=='undefined' ? Notification.permission : 'unsupported');
+      };
+
+      const sendSelfTestNotification = async () => {
+        await publishNotification(db, {
+          title: '🧪 Test Bildirimi',
+          body: `${user.name} - ${getDeviceLabel()} cihaz test bildirimi`,
+          targetUserId: user.id,
+          createdBy: user.id
+        });
+        sendNotif('🧪 Test Bildirimi', 'Bildirim sistemi çalışıyor.');
+        showToast('Test Gönderildi', 'Bildirim merkezine test kaydı eklendi.', 'success');
       };
 
       const isAdmin = user.role === 'admin';
@@ -1353,6 +1381,21 @@
                 </>
               )}
               <button className="btn btn-ghost btn-icon" title="Çıkış" onClick={onLogout}>🚪</button>
+            </div>
+          </div>
+
+          <div className="notice-card fade-in">
+            <div className="notice-title">📡 Bildirim Sistemi Durumu</div>
+            <div className="notice-sub">Bu alan Android / iOS / Web istemcilerde bildirim altyapısının aktifliğini canlı gösterir.</div>
+            <div className="notice-row" style={{marginBottom:10}}>
+              <span className="status-chip">Cihaz: {getDeviceLabel()}</span>
+              <span className="status-chip">İzin: {notifPermission}</span>
+              <span className="status-chip">Okunmamış: {unreadCount}</span>
+            </div>
+            <div className="notice-row">
+              <button className="btn btn-secondary btn-sm" onClick={activateNotifications}>📳 Bildirim İzni Ver</button>
+              <button className="btn btn-primary btn-sm" onClick={sendSelfTestNotification}>🧪 Kendime Test Bildirimi</button>
+              <button className="btn btn-ghost btn-sm" onClick={()=>{setShowNotifications(true);markNotificationsSeen();}}>🔔 Bildirim Merkezini Aç</button>
             </div>
           </div>
 
