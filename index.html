@@ -93,6 +93,11 @@
     .notif-badge{position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;
       font-size:10px;font-weight:700;padding:2px 5px;border-radius:8px;min-width:17px;
       text-align:center;font-family:'JetBrains Mono',monospace}
+    .notif-list{display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto;padding-right:4px}
+    .notif-item{background:var(--light-gray);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+    .notif-item-title{font-weight:700;font-size:14px}
+    .notif-item-body{font-size:13px;color:var(--text-muted);margin-top:4px}
+    .notif-item-meta{font-size:11px;color:var(--text-muted);margin-top:6px}
 
     /* ── User badge ── */
     .user-badge{background:var(--card);padding:8px 14px;border-radius:10px;font-size:14px;
@@ -387,6 +392,17 @@
     };
 
     // ─── Browser Notifications ─────────────────────────
+    const registerServiceWorker = async () => {
+      if (!('serviceWorker' in navigator)) return false;
+      try {
+        await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+        return true;
+      } catch (e) {
+        console.warn('Service worker kaydı başarısız:', e);
+        return false;
+      }
+    };
+
     const requestNotifPermission = async () => {
       if ('Notification' in window && Notification.permission === 'default') {
         const p = await Notification.requestPermission();
@@ -396,6 +412,21 @@
     const sendNotif = (title, body) => {
       if ('Notification' in window && Notification.permission === 'granted')
         new Notification(title, { body, icon: 'spistakip.ico' });
+    };
+
+    const publishNotification = async (db, payload) => {
+      try {
+        await db.collection('notifications').add({
+          title: payload.title || 'SPI Bildirim',
+          body: payload.body || '',
+          createdAt: nowIso(),
+          targetRole: payload.targetRole || 'all',
+          targetUserId: payload.targetUserId || null,
+          createdBy: payload.createdBy || null
+        });
+      } catch (e) {
+        console.warn('Bildirim kaydı yazılamadı:', e);
+      }
     };
 
     // ─── Timer Component ───────────────────────────────
@@ -657,7 +688,7 @@
     };
 
     // ─── Complete Job Modal ─────────────────────────────
-    const CompleteJobModal = ({ job, db, onClose, onComplete }) => {
+    const CompleteJobModal = ({ job, db, actorUser, onClose, onComplete }) => {
       const [duration, setDuration] = useState('');
       const [notes, setNotes] = useState('');
       const [saving, setSaving] = useState(false);
@@ -676,6 +707,12 @@
           await db.collection('jobs').doc(job.id).update({ status:'tamamlandi', completedAt: nowIso() });
           showToast('Tamamlandı!', job.title, 'success');
           sendNotif('✅ İş Tamamlandı', job.title);
+          await publishNotification(db, {
+            title: '✅ İş Tamamlandı',
+            body: `${job.title} işi tamamlandı.`,
+            targetRole: 'admin',
+            createdBy: actorUser?.id || null
+          });
           onComplete?.(); onClose();
         } catch(e) { showToast('Hata', e.message||e, 'error'); } finally { setSaving(false); }
       };
@@ -823,6 +860,12 @@
             estimatedTime:safeTrim(estimatedTime),
             createdBy:adminUser.id, createdAt:nowIso()
           });
+          await publishNotification(db, {
+            title: '🆕 Yeni İş Atandı',
+            body: `${safeTrim(title)} işi size atandı.`,
+            targetUserId: assignedTo,
+            createdBy: adminUser.id
+          });
           showToast('İş Oluşturuldu!', title, 'success'); onClose();
         } catch(e) { showToast('Hata',e.message||e,'error'); } finally { setSaving(false); }
       };
@@ -896,7 +939,6 @@
       const [pin, setPin] = useState('');
       const [role, setRole] = useState('teknisyen');
       const [saving, setSaving] = useState(false);
-      const [deleting, setDeleting] = useState(null);
 
       useEffect(() => {
         const unsub = db.collection('users').onSnapshot(snap => {
@@ -915,15 +957,6 @@
           showToast('Kullanıcı Eklendi', safeTrim(name), 'success');
           setName(''); setPin(''); setTab('list');
         } catch(e) { showToast('Hata',e.message||e,'error'); } finally { setSaving(false); }
-      };
-
-      const handleDelete = async id => {
-        if (!confirm('Bu kullanıcıyı silmek istediğinize emin misiniz?')) return;
-        setDeleting(id);
-        try {
-          await db.collection('users').doc(id).delete();
-          showToast('Silindi','Kullanıcı kaldırıldı','info');
-        } catch(e) { showToast('Hata',e.message||e,'error'); } finally { setDeleting(null); }
       };
 
       return (
@@ -953,10 +986,6 @@
                       </div>
                       <div style={{display:'flex',alignItems:'center',gap:8}}>
                         <span className={`role-badge role-${u.role}`}>{u.role}</span>
-                        <button className="btn btn-danger btn-sm btn-icon" title="Sil"
-                          onClick={()=>handleDelete(u.id)} disabled={deleting===u.id}>
-                          {deleting===u.id?'⏳':'🗑'}
-                        </button>
                       </div>
                     </div>
                   ))}
@@ -1073,26 +1102,22 @@
       const [showEdit, setShowEdit] = useState(false);
       const [showDetail, setShowDetail] = useState(false);
       const [showReminder, setShowReminder] = useState(false);
-      const [deleting, setDeleting] = useState(false);
 
       const handleStart = async () => {
         await db.collection('jobs').doc(job.id).update({ status:'devam', startTime:nowIso(), isPaused:false });
         showToast('Başlatıldı', job.title, 'success');
         sendNotif('▶️ İş Başlatıldı', job.title);
+        await publishNotification(db, {
+          title: '▶️ İş Başlatıldı',
+          body: `${job.title} işi başlatıldı.`,
+          targetRole: 'admin',
+          createdBy: user?.id || null
+        });
       };
 
       const handlePause = async () => {
         await db.collection('jobs').doc(job.id).update({ isPaused:!job.isPaused });
         showToast(job.isPaused?'Devam Ediyor':'Duraklatıldı', job.title, 'info');
-      };
-
-      const handleDelete = async () => {
-        if (!confirm(`"${job.title}" işini silmek istediğinize emin misiniz?`)) return;
-        setDeleting(true);
-        try {
-          await db.collection('jobs').doc(job.id).delete();
-          showToast('Silindi', job.title, 'info');
-        } catch(e) { showToast('Hata', e.message||e, 'error'); setDeleting(false); }
       };
 
       const statusLabels = { bekliyor:'Bekliyor', devam:'Devam Ediyor', tamamlandi:'Tamamlandı' };
@@ -1160,20 +1185,50 @@
               {isAdmin && job.status!=='tamamlandi' && (
                 <button className="btn btn-ghost btn-sm btn-icon" title="Düzenle" onClick={()=>setShowEdit(true)}>✏️</button>
               )}
-              {isAdmin && (
-                <button className="btn btn-ghost btn-sm btn-icon" title="Sil" onClick={handleDelete} disabled={deleting}>
-                  {deleting?'⏳':'🗑️'}
-                </button>
-              )}
             </div>
           </div>
 
-          {showComplete && <CompleteJobModal job={job} db={db} onClose={()=>setShowComplete(false)} onComplete={onUpdate} />}
+          {showComplete && <CompleteJobModal job={job} db={db} actorUser={user} onClose={()=>setShowComplete(false)} onComplete={onUpdate} />}
           {showEdit && <EditJobModal job={job} db={db} technicians={technicians} onClose={()=>setShowEdit(false)} />}
           {showDetail && <JobDetailModal job={job} db={db} technicians={technicians} onClose={()=>setShowDetail(false)} />}
         </>
       );
     };
+
+    const NotificationsModal = ({ notifications, onClose, onRequestPermission }) => (
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal modal-sm fade-in" onClick={e=>e.stopPropagation()}>
+          <div className="modal-header">
+            <div>
+              <div className="modal-title">🔔 Bildirim Merkezi</div>
+              <div className="modal-subtitle">Web / iOS / Android için ortak bildirim akışı</div>
+            </div>
+            <button className="modal-close" onClick={onClose}>✕</button>
+          </div>
+          <div className="modal-body">
+            <button className="btn btn-secondary btn-sm" onClick={onRequestPermission} style={{marginBottom:12}}>
+              📳 Tarayıcı Bildirim İzni
+            </button>
+            {notifications.length===0 ? (
+              <div className="empty-state" style={{padding:'30px 6px'}}>
+                <div className="empty-icon">🔕</div>
+                <div className="empty-title">Henüz bildirim yok</div>
+              </div>
+            ) : (
+              <div className="notif-list">
+                {notifications.map(n=>(
+                  <div className="notif-item" key={n.id}>
+                    <div className="notif-item-title">{n.title}</div>
+                    <div className="notif-item-body">{n.body}</div>
+                    <div className="notif-item-meta">{fmtDateShort(n.createdAt)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
 
     // ─── Dashboard ──────────────────────────────────────
     const Dashboard = ({ user, db, onLogout }) => {
@@ -1186,6 +1241,16 @@
       const [sortBy, setSortBy] = useState('newest');
       const [showCreate, setShowCreate] = useState(false);
       const [showUsers, setShowUsers] = useState(false);
+      const [showNotifications, setShowNotifications] = useState(false);
+      const [notifications, setNotifications] = useState([]);
+      const [unreadCount, setUnreadCount] = useState(0);
+
+      const canReadNotification = useCallback((n) => {
+        if (!n) return false;
+        if (n.targetUserId && n.targetUserId === user.id) return true;
+        if (n.targetRole === 'all') return true;
+        return n.targetRole === user.role;
+      }, [user]);
 
       useEffect(() => {
         if (user.role!=='admin') return;
@@ -1206,6 +1271,23 @@
         }
         return ()=>unsub&&unsub();
       }, [user, db]);
+
+      useEffect(() => {
+        const unsub = db.collection('notifications').orderBy('createdAt','desc').limit(60).onSnapshot(snap => {
+          const all = snap.docs.map(d=>({id:d.id,...d.data()})).filter(canReadNotification);
+          setNotifications(all);
+          const seenKey = `seenNotifAt_${user.id}`;
+          const seenAt = localStorage.getItem(seenKey);
+          const unread = all.filter(n => !seenAt || new Date(n.createdAt) > new Date(seenAt)).length;
+          setUnreadCount(unread);
+        });
+        return ()=>unsub();
+      }, [db, user, canReadNotification]);
+
+      const markNotificationsSeen = () => {
+        localStorage.setItem(`seenNotifAt_${user.id}`, nowIso());
+        setUnreadCount(0);
+      };
 
       const isAdmin = user.role === 'admin';
 
@@ -1251,9 +1333,9 @@
               <div className="logo-text">SPI İş Takip {isAdmin && <span style={{fontSize:14,fontWeight:400,opacity:.7}}>(Admin)</span>}</div>
             </div>
             <div className="header-right">
-              <button className="notif-btn" title="Bildirimler">
+              <button className="notif-btn" title="Bildirimler" onClick={()=>{setShowNotifications(true);markNotificationsSeen();}}>
                 🔔
-                {inProgress > 0 && <span className="notif-badge">{inProgress}</span>}
+                {unreadCount > 0 && <span className="notif-badge">{unreadCount}</span>}
               </button>
               <div className="user-badge">
                 <span>👤</span>
@@ -1355,6 +1437,7 @@
 
           {showCreate && <CreateJobModal db={db} technicians={technicians} adminUser={user} onClose={()=>setShowCreate(false)} />}
           {showUsers && <UsersModal db={db} onClose={()=>setShowUsers(false)} />}
+          {showNotifications && <NotificationsModal notifications={notifications} onClose={()=>setShowNotifications(false)} onRequestPermission={requestNotifPermission} />}
         </div>
       );
     };
@@ -1373,6 +1456,7 @@
           localStorage.setItem('firebaseConfig', JSON.stringify(cfg));
           if (!firebase.apps.length) firebase.initializeApp(cfg);
           setDb(firebase.firestore());
+          registerServiceWorker();
           showToast('Bağlandı', 'Firebase bağlantısı kuruldu', 'success');
         } catch(e) {
           showToast('Bağlantı Hatası', e?.message||e, 'error');
