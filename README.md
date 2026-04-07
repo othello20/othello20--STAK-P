@@ -1,0 +1,1 @@
+# othello20--STAK-P
